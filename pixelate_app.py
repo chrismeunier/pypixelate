@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 import math
 import tkinter as tk
 from tkinter import filedialog
@@ -14,7 +15,7 @@ class ImageProcessingApp:
     OUTPUT_COL = 2
     UI_COL = 1
     IMG_ROW = 0
-    SIZE_ROW = 10
+    SIZE_ROW = 12
 
     def __init__(self, root):
         self.root = root
@@ -46,12 +47,34 @@ class ImageProcessingApp:
         self.pixel_slider = tk.Scale(root, from_=2, to=100, orient=tk.HORIZONTAL, length=200,
                                       command=self.update_pixel_size, state=tk.DISABLED, label="Adjust Pixel Size:")
         self.pixel_slider.grid(row=2, column=self.UI_COL, pady=(0, 0), padx=10)
-        slider_hint = tk.Label(root, text="How many pixels will merge together.\nBigger=More pixelated")
-        slider_hint.grid(row=3, column=self.UI_COL, pady=(0, 10))
+        self.slider_hint = tk.Label(root)
+        self.slider_hint.grid(row=3, column=self.UI_COL, pady=(0, 10))
+
+        # Var to store the pixelation method
+        self.by_pixel_size = tk.BooleanVar()
+        self.by_pixel_size.set(True)  # Default method is by pixel size
+        # Radio buttons to select pixelation method
+        self.pixel_method_label = tk.Label(root, text="Pixelation Method:")
+        self.pixel_method_label.grid(row=4, column=self.UI_COL, pady=(10, 0))
+        self.pixel_method_radio1 = tk.Radiobutton(root, text="By Pixel Size", variable=self.by_pixel_size, value=True, command=self.update_slider_label)
+        self.pixel_method_radio1.grid(row=5, column=self.UI_COL, pady=(0, 0))
+        self.pixel_method_radio2 = tk.Radiobutton(root, text="To Size", variable=self.by_pixel_size, value=False, command=self.update_slider_label)
+        self.pixel_method_radio2.grid(row=6, column=self.UI_COL, pady=(0, 10))
+
+        # Var to store the pixelation reference dimension (width or height) when pixelating to a size
+        self.pixel_ref_width = tk.BooleanVar(value=True)
+        # Radio buttons to select pixelation reference dimension
+        self.pixel_ref_label = tk.Label(root, text="Pixelation Reference Dimension:")
+        self.pixel_ref_label.grid(row=7, column=self.UI_COL, pady=(10, 0))
+        self.pixel_ref_radio1 = tk.Radiobutton(root, text="Width", variable=self.pixel_ref_width, value=True)
+        self.pixel_ref_radio1.grid(row=8, column=self.UI_COL, pady=(0, 0))
+        self.pixel_ref_radio2 = tk.Radiobutton(root, text="Height", variable=self.pixel_ref_width, value=False)
+        self.pixel_ref_radio2.grid(row=9, column=self.UI_COL, pady=(0, 10))
+        self.update_slider_label()
 
         # Button to process all images in a folder
         self.process_folder_button = tk.Button(root, text="Process all Images in Folder...", command=self.process_folder)
-        self.process_folder_button.grid(row=4, column=self.UI_COL, pady=10)
+        self.process_folder_button.grid(row=10, column=self.UI_COL, pady=10)
 
         # Button to save the processed image (and the low-res image)
         self.save_button = tk.Button(root, text="Save Pixelated Image", command=self.save_image, state=tk.DISABLED)
@@ -94,8 +117,25 @@ class ImageProcessingApp:
         self.pixel_sizing = min(self.pixel_sizing, max_pixel_size)  # Ensure current value is within new range
         self.pixel_slider.set(self.pixel_sizing)
 
+    def update_slider_label(self):
+        if self.by_pixel_size.get():
+            self.slider_hint.config(text="How many pixels will merge together.\nBigger=More pixelated")
+        else:
+            self.slider_hint.config(text="The size of the new image in pixels.\nBigger=Less pixelated")
+        self.show_hide_pixel_ref_dimension()
+
     def update_pixel_size(self, value):
         self.pixel_sizing = int(value)
+
+    def show_hide_pixel_ref_dimension(self):
+        if self.by_pixel_size.get():
+            self.pixel_ref_label.grid_forget()
+            self.pixel_ref_radio1.grid_forget()
+            self.pixel_ref_radio2.grid_forget()
+        else:
+            self.pixel_ref_label.grid(row=7, column=self.UI_COL, pady=(10, 0))
+            self.pixel_ref_radio1.grid(row=8, column=self.UI_COL, pady=(0, 0))
+            self.pixel_ref_radio2.grid(row=9, column=self.UI_COL, pady=(0, 10))
 
     def process_image(self, display=True):
         if self.selected_file is None:
@@ -104,8 +144,11 @@ class ImageProcessingApp:
         # Read the selected image
         img = cv2.imread(str(self.selected_file))
 
-        # Perform image processing (e.g., pixelate the image)
-        self.processed_img, self.low_res_img = pixelate(img, self.pixel_sizing)
+        # Perform image processing (e.g., pixelate_by_pixel_size the image)
+        if self.by_pixel_size.get():
+            self.processed_img, self.low_res_img = pixelate_by_pixel_size(img, self.pixel_sizing)
+        else:
+            self.processed_img, self.low_res_img = pixelate_to_size(img, self.pixel_sizing, self.pixel_ref_width.get(), not self.pixel_ref_width.get())
 
         if display:
             # Display the original image
@@ -179,7 +222,7 @@ def main():
     root.resizable(width=False, height=False)
     root.mainloop()
 
-def pixelate(input, pixel_size:int = 16):
+def pixelate_by_pixel_size(input:np.ndarray, pixel_size:int = 16):
     # Inspired from: https://stackoverflow.com/a/55509210/15783454
 
     # Get input size
@@ -197,6 +240,23 @@ def pixelate(input, pixel_size:int = 16):
     output = cv2.resize(pixel_perfect, (w * pixel_size, h * pixel_size), interpolation=cv2.INTER_NEAREST)
     return output, pixel_perfect
 
+def pixelate_to_size(input:np.ndarray, size:int = 16, keep_width:bool = True, keep_height:bool = False):
+    assert not (keep_width and keep_height) and (keep_width or keep_height), "Only one of width or height can and must be True"
+
+    height, width = input.shape[:2]
+
+    if keep_width:
+        w = size
+        h = round(size * height / width)
+    elif keep_height:
+        h = size
+        w = round(size * width / height)
+
+    pixel_perfect = cv2.resize(input, (w, h), interpolation=cv2.INTER_LINEAR)
+    output = cv2.resize(pixel_perfect, (width, height), interpolation=cv2.INTER_NEAREST)
+    return output, pixel_perfect
+
 
 if __name__ == "__main__":
     main()
+
